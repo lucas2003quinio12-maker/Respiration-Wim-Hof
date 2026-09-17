@@ -72,6 +72,41 @@
   </div>
 
   <script>
+    // --- GESTION DES VOLUMES AVEC L'API WEB AUDIO (Compatible iPhone) ---
+    let audioCtx = null;
+    const gainNodes = {};
+
+    // Règle ici tes volumes :
+    // 1.0 = volume normal (100%)
+    // 0.4 = 40% (plus bas)
+    // 2.0 = 200% (boosté / plus fort)
+    const soundVolumes = {
+      'snd-bg': 0.35,        // Musique d'ambiance plus discrète
+      'snd-inspire': 1.8,   // Inspiration BOOSTÉE (180%)
+      'snd-expire': 1.8,    // Expiration BOOSTÉE (180%)
+      'snd-retention': 1.0, // Cloche rétention normale
+      'snd-recup': 0.45     // Cloche récup BAISSÉE (45%)
+    };
+
+    function initAudioEngine() {
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // On connecte chaque balise audio à un module de gain (volume) personnalisé
+      Object.keys(soundVolumes).forEach(id => {
+        const audioEl = document.getElementById(id);
+        if (audioEl) {
+          const track = audioCtx.createMediaElementSource(audioEl);
+          const gainNode = audioCtx.createGain();
+          gainNode.gain.value = soundVolumes[id];
+          
+          track.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          gainNodes[id] = gainNode;
+        }
+      });
+    }
+
     function playAudio(elementId) {
       const audio = document.getElementById(elementId);
       if (audio) {
@@ -90,16 +125,41 @@
     }
 
     function startSession() {
+      // Déverrouille l'audio iOS au clic sur Démarrer
+      initAudioEngine();
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
       totalRounds = parseInt(document.getElementById('cfg-rounds').value);
       breathsTarget = parseInt(document.getElementById('cfg-breaths').value);
       pace = parseFloat(document.getElementById('cfg-pace').value);
       currentRound = 1;
 
-      // Lancement de l'ambiance en fond sonore
+      // Lancement de l'ambiance
+      playAudio('snd-bg');
+
+      document.getElementById('setup-screen').style.display = 'none';
+      document.getElementById('session-screen').style.display = 'flex';
+      
+      requestWakeLock();
+      startBreathingPhase();
+    }
+
+    function startSession() {
+      totalRounds = parseInt(document.getElementById('cfg-rounds').value);
+      breathsTarget = parseInt(document.getElementById('cfg-breaths').value);
+      pace = parseFloat(document.getElementById('cfg-pace').value);
+      currentRound = 1;
+
+      // Lancement forcé de la musique d'ambiance
       const bgMusic = document.getElementById('snd-bg');
       if (bgMusic) {
-        bgMusic.volume = 0.35; // 35% du volume max
-        bgMusic.play().catch(() => {});
+        bgMusic.currentTime = 0;
+        bgMusic.play().catch(err => {
+          console.error("Erreur lecture ambiance :", err);
+          alert("L'audio ambiance n'a pas pu démarrer. Vérifie le nom du fichier ambiance.mp3");
+        });
       }
 
       document.getElementById('setup-screen').style.display = 'none';
