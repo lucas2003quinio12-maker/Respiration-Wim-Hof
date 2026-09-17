@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Respiration WHM</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+    body { background-color: #0b0f19; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+    
+    /* Écran des réglages */
+    #setup-screen { display: flex; flex-direction: column; gap: 15px; width: 85%; max-width: 360px; }
+    h1 { text-align: center; margin-bottom: 10px; font-size: 1.6rem; color: #38bdf8; }
+    .input-group { display: flex; justify-content: space-between; align-items: center; font-size: 0.95rem; }
+    input { background: #1e293b; border: 1px solid #334155; color: #fff; padding: 8px 12px; border-radius: 8px; width: 80px; text-align: center; font-size: 1rem; }
+    .btn { background: #0284c7; color: white; border: none; border-radius: 12px; padding: 15px; font-size: 1.1rem; font-weight: bold; cursor: pointer; margin-top: 10px; }
+    
+    /* Écran de session */
+    #session-screen { display: none; flex-direction: column; align-items: center; justify-content: space-around; height: 85vh; width: 100%; }
+    .info { text-align: center; }
+    .round-label { font-size: 1.1rem; color: #94a3b8; }
+    .state-label { font-size: 2rem; font-weight: bold; margin-top: 5px; }
+    
+    /* Cercle animé */
+    .circle-container { position: relative; width: 260px; height: 260px; display: flex; align-items: center; justify-content: center; }
+    .circle { width: 140px; height: 140px; background: radial-gradient(circle, #38bdf8 0%, #0369a1 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; font-weight: bold; transition: transform ease-in-out; }
+    
+    .btn-action { background: #e11d48; width: 80%; max-width: 320px; }
+  </style>
+</head>
+<body>
+
+  <!-- FICHIERS AUDIO -->
+  <audio id="snd-bg" src="ambiance.mp3" loop preload="auto"></audio>
+  <audio id="snd-inspire" src="inspiration.mp3" preload="auto"></audio>
+  <audio id="snd-expire" src="expiration.mp3" preload="auto"></audio>
+  <audio id="snd-retention" src="retention.mp3" preload="auto"></audio>
+  <audio id="snd-recup" src="recup.mp3" preload="auto"></audio>
+
+  <!-- ÉCRAN CONFIGURATION -->
+  <div id="setup-screen">
+    <h1>Respiration WHM</h1>
+    <div class="input-group">
+      <label>Cycles (Rounds) :</label>
+      <input type="number" id="cfg-rounds" value="3" min="1" max="10">
+    </div>
+    <div class="input-group">
+      <label>Souffles par cycle :</label>
+      <input type="number" id="cfg-breaths" value="30" min="10" max="60">
+    </div>
+    <div class="input-group">
+      <label>Durée souffle (sec) :</label>
+      <input type="number" id="cfg-pace" value="2.6" step="0.2" min="1.5" max="5">
+    </div>
+    <button class="btn" onclick="startSession()">Démarrer</button>
+  </div>
+
+  <!-- ÉCRAN SESSION -->
+  <div id="session-screen">
+    <div class="info">
+      <div class="round-label" id="round-indicator">Round 1 / 3</div>
+      <div class="state-label" id="phase-title">Inspirez</div>
+    </div>
+
+    <div class="circle-container">
+      <div class="circle" id="breath-circle">1</div>
+    </div>
+
+    <button class="btn btn-action" id="action-btn" onclick="handleActionButton()">Passer</button>
+  </div>
+
+  <script>
+    function playAudio(elementId) {
+      const audio = document.getElementById(elementId);
+      if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+      }
+    }
+
+    let totalRounds = 3, breathsTarget = 30, pace = 2.6;
+    let currentRound = 1, breathCount = 0, phase = 'IDLE', timer = null, secondsElapsed = 0;
+
+    async function requestWakeLock() {
+      if ('wakeLock' in navigator) {
+        try { await navigator.wakeLock.request('screen'); } catch(e) {}
+      }
+    }
+
+    function startSession() {
+      totalRounds = parseInt(document.getElementById('cfg-rounds').value);
+      breathsTarget = parseInt(document.getElementById('cfg-breaths').value);
+      pace = parseFloat(document.getElementById('cfg-pace').value);
+      currentRound = 1;
+
+      // Lancement de l'ambiance en fond sonore
+      const bgMusic = document.getElementById('snd-bg');
+      if (bgMusic) {
+        bgMusic.volume = 0.35; // 35% du volume max
+        bgMusic.play().catch(() => {});
+      }
+
+      document.getElementById('setup-screen').style.display = 'none';
+      document.getElementById('session-screen').style.display = 'flex';
+      
+      requestWakeLock();
+      startBreathingPhase();
+    }
+
+    // 1. Phase Hyperventilation
+    function startBreathingPhase() {
+      phase = 'BREATHING';
+      breathCount = 0;
+      document.getElementById('action-btn').style.display = 'none';
+      document.getElementById('round-indicator').innerText = `Round ${currentRound} / ${totalRounds}`;
+      
+      const halfPace = pace / 2;
+      const circle = document.getElementById('breath-circle');
+      circle.style.transition = `transform ${halfPace}s ease-in-out`;
+
+      const breathLoop = () => {
+        if (breathCount >= breathsTarget) {
+          startRetentionPhase();
+          return;
+        }
+
+        breathCount++;
+        circle.innerText = breathCount;
+
+        // INSPIRATION
+        document.getElementById('phase-title').innerText = "Inspirez";
+        circle.style.transform = "scale(1.7)";
+        playAudio('snd-inspire');
+
+        // EXPIRATION
+        timer = setTimeout(() => {
+          document.getElementById('phase-title').innerText = "Expirez";
+          circle.style.transform = "scale(0.85)";
+          playAudio('snd-expire');
+
+          timer = setTimeout(breathLoop, halfPace * 1000);
+        }, halfPace * 1000);
+      };
+
+      breathLoop();
+    }
+
+    // 2. Phase Rétention (Poumons Vides)
+    function startRetentionPhase() {
+      phase = 'RETENTION';
+      playAudio('snd-retention'); // Cloche de rétention
+      
+      document.getElementById('phase-title').innerText = "Bloquez (Poumons vides)";
+      
+      const circle = document.getElementById('breath-circle');
+      circle.style.transition = "transform 0.4s";
+      circle.style.transform = "scale(1)";
+      
+      const actionBtn = document.getElementById('action-btn');
+      actionBtn.style.display = 'block';
+      actionBtn.innerText = "J'ai besoin de respirer";
+
+      secondsElapsed = 0;
+      circle.innerText = "0s";
+
+      timer = setInterval(() => {
+        secondsElapsed++;
+        const mins = Math.floor(secondsElapsed / 60);
+        const secs = secondsElapsed % 60;
+        circle.innerText = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      }, 1000);
+    }
+
+    // 3. Phase Récupération (15s Poumons Pleins)
+    function startRecoveryPhase() {
+      clearInterval(timer);
+      phase = 'RECOVERY';
+      playAudio('snd-recup'); // Cloche de récupération
+
+      document.getElementById('phase-title').innerText = "Inspirez à fond et bloquez";
+      const circle = document.getElementById('breath-circle');
+      circle.style.transform = "scale(1.5)";
+      
+      document.getElementById('action-btn').style.display = 'none';
+
+      let recoveryLeft = 15;
+      circle.innerText = recoveryLeft;
+
+      timer = setInterval(() => {
+        recoveryLeft--;
+        circle.innerText = recoveryLeft;
+
+        if (recoveryLeft <= 0) {
+          clearInterval(timer);
+          if (currentRound < totalRounds) {
+            currentRound++;
+            startBreathingPhase();
+          } else {
+            finishSession();
+          }
+        }
+      }, 1000);
+    }
+
+    function handleActionButton() {
+      if (phase === 'RETENTION') {
+        startRecoveryPhase();
+      }
+    }
+
+    function finishSession() {
+      phase = 'FINISHED';
+      
+      const bgMusic = document.getElementById('snd-bg');
+      if (bgMusic) bgMusic.pause();
+
+      document.getElementById('phase-title').innerText = "Session terminée !";
+      document.getElementById('breath-circle').innerText = "✓";
+      const actionBtn = document.getElementById('action-btn');
+      actionBtn.style.display = 'block';
+      actionBtn.innerText = "Recommencer";
+      actionBtn.onclick = () => location.reload();
+    }
+  </script>
+</body>
+</html>
